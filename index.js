@@ -1,73 +1,112 @@
-const { faker } = require("@faker-js/faker");
-const express = require("express");
 require("dotenv").config();
+const express = require("express");
 const cors = require("cors");
 const bodypParser = require("body-parser");
-const { Sequelize } = require("sequelize");
+const { Sequelize, DataTypes } = require("sequelize");
 
 const app = express();
 const port = process.env.PORT;
 app.use(cors());
 app.use(bodypParser.json());
 
-const securityMiddleware = (req, res, next) => {
-  const authHeader = req.headers.authorization;
-  if (authHeader !== process.env.PASSWORD) {
-    res.status(401).json({ message: "Unauthorized: Invalid password" });
+//connexion DB
+const sequelize = new Sequelize(
+  process.env.DB_NAME,
+  process.env.DB_USER,
+  process.env.DB_PASS,
+  {
+    host: process.env.DB_HOST,
+    dialect: "postgres",
   }
-  next();
+);
+const connectionToDb = async () => {
+  try {
+    await sequelize.authenticate();
+    console.log("Connection has been established successfully.");
+  } catch (error) {
+    console.error("Unable to connect to the database:", error);
+  }
 };
 
-app.use(securityMiddleware);
+connectionToDb();
 
-app.get("/", (req, res) => {
-  res.send("Hello World!");
+// middleware sécu
+app.use((req, res, next) => {
+  if (process.env.PASSWORD !== req.headers.authorization) {
+    return res.status(401).json("le pass est incorect");
+  }
+  next();
 });
+
+const UserModel = sequelize.define("User", {
+  id: {
+    type: DataTypes.UUID,
+    defaultValue: DataTypes.UUIDV4,
+    primaryKey: true,
+  },
+  name: {
+    type: DataTypes.STRING,
+    allowNull: false,
+  },
+  email: {
+    type: DataTypes.STRING,
+    allowNull: false,
+    unique: true,
+  },
+  avatar: {
+    type: DataTypes.STRING,
+    allowNull: true,
+  },
+});
+
+//Sync de la BD
+const syncDB = async () => {
+  await sequelize.sync({ alter: true });
+};
+syncDB();
 
 app.listen(port, () => {
   console.log(`Example app listening on port ${port}`);
 });
 
-app.get("/users", (_, res) => {
-  const users = [];
-  for (let i = 0; i < 10; i++) {
-    users.push({
-      id: faker.string.uuid(),
-      name: faker.internet.username(),
-      email: faker.internet.email(),
-      avatar: faker.image.avatar(),
-    });
-  }
+// Get (récuperer une info) /users => récuperer les users
+app.get("/users", async function (_, res) {
+  const users = await UserModel.findAll();
   res.status(200).json(users);
 });
 
+// POST (créer une entrée en BD) /users => créer un user
 app.post("/users", (req, res) => {
-  const { email, name } = req.body;
+  const { name, email } = req.body;
   if (!name || !email) {
     res.status(400).json({ message: "Name and email mandatory" });
   }
-  const users = {
-    id: faker.string.uuid(),
-    name,
-    email,
-    avatar: faker.image.avatar(),
-  };
-  res.status(201).json(users);
+  const user = UserModel.create({
+    id: req.body.id,
+    name: req.body.name,
+    email: req.body.email,
+    avatar: req.body.avatar,
+  });
+  res.status(201).json(user);
 });
 
-app.patch("/users", (req, res) => {
+// PATCH MAJ d'un user en particulier
+app.patch("/users/:id", async (req, res) => {
   const { id } = req.params;
   const { name, email } = req.body;
-  const user = {
-    id,
-    name,
-    email,
-    avatar: faker.image.avatar(),
-  };
+  const user = await UserModel.findByPk(id);
+  user.name = name || user.name;
+  user.email = email || user.email;
+
+  await user.save();
   res.status(200).json(user);
 });
 
-app.delete("/users/:id", (_, res) => res.status(204).json());
+// Supression d'un user par son ID
+app.delete("/users/:id", async (req, res) => {
+  await UserModel.destroy({ where: { id: req.params.id } }),
+    res.status(204).json();
+});
 
 app.use("*", (_, res) => {
   res.status(404).json({
